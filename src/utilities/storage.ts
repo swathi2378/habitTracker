@@ -70,3 +70,13 @@ export const getEntriesBetweenDates = async (startDate: string, endDate: string)
   const allEntries = await getAllEntries();
   return allEntries.filter((e) => e.date >= startDate && e.date <= endDate);
 };
+
+export const updateHabit = async (updatedHabit: Habit): Promise<void> => {
+  try {
+    const habits = await getHabits();
+    const newHabits = habits.map(h => h.id === updatedHabit.id ? updatedHabit : h);
+    await AsyncStorage.setItem(HABITS_KEY, JSON.stringify(newHabits));
+  } catch (e) {
+    console.error('Failed to update habit', e);
+  }
+};
