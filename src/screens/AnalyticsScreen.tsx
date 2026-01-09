@@ -1,11 +1,15 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Button } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { getEntriesForHabit, getHabits, updateHabit } from '../utilities/storage';
+import { getEntriesForHabit, getHabits, updateHabit, deleteHabit } from '../utilities/storage';
 import { Entry, Habit } from '../utilities/types';
 import { Ionicons } from '@expo/vector-icons';
+import { THEME } from '../utilities/theme';
+import { Header } from '../components/Header';
+import { Card } from '../components/Card';
+import { Button } from '../components/Button';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Analytics'>;
 
@@ -20,6 +24,11 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
     message: '',
     yesCount: 0,
     noCount: 0,
+    numericTotal: 0,
+    numericAvg: 0,
+    numericBest: 0,
+    bestDay: '',
+    dayStats: {} as Record<string, number>
   });
 
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -33,32 +42,21 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
   );
 
   const loadData = async () => {
-    // 1. Fetch Habit Details First
     const allHabits = await getHabits();
     const currentHabit = allHabits.find(h => h.id === habitId);
     
     if (currentHabit) {
         setHabitDetails(currentHabit);
         setEditName(currentHabit.name);
-        navigation.setOptions({ 
-            headerRight: () => (
-                <TouchableOpacity onPress={() => setEditModalVisible(true)} style={{ marginRight: 10 }}>
-                    <Ionicons name="pencil" size={24} color="#007AFF" />
-                </TouchableOpacity>
-            )
-        });
     }
 
-    // 2. Fetch Entries
     const data = await getEntriesForHabit(habitId);
     setEntries(data);
     
-    // 3. Calculate Stats with both
     calculateStats(data, currentHabit);
   };
 
   const calculateStats = (explicitEntries: Entry[], habit: Habit | undefined) => {
-    // Create a map for easy lookup
     const entryMap = new Map();
     explicitEntries.forEach(e => entryMap.set(e.date, e));
 
@@ -67,15 +65,9 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
     let currentStreak = 0;
     let streakBroken = false;
 
-    // Determine Date Range
-    // From createdAt to Today, OR earliest entry date if older
     const today = new Date();
-    // note: Do NOT setHours(0,0,0,0) on 'today' used for string gen, otherwise UTC date might shift back
-    // relative to HomeScreen's new Date().ToISOString().
-    
     let startDate = habit ? new Date(habit.createdAt) : new Date();
     
-    // Check if we have entries older than createdAt
     if (explicitEntries.length > 0) {
         const sorted = [...explicitEntries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
         const firstEntryDate = new Date(sorted[0].date);
@@ -84,19 +76,16 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
         }
     }
     
-    // Normalize for day count calculation ONLY
     const todayFloored = new Date(today);
     todayFloored.setHours(0,0,0,0);
     const startFloored = new Date(startDate);
     startFloored.setHours(0,0,0,0);
     
-    // Safety check for crazy dates
     const diffTime = Math.abs(todayFloored.getTime() - startFloored.getTime());
     const totalDays = Math.max(1, Math.min(Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1, 3650)); 
     
-    // Check habits from Today backwards
     for (let i = 0; i < totalDays; i++) {
-        const d = new Date(today); // Use 'today' with current time to match HomeScreen ISO generation
+        const d = new Date(today); 
         d.setDate(d.getDate() - i);
         const dateStr = d.toISOString().split('T')[0];
         
@@ -104,7 +93,6 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
         let isSuccess = false;
 
         if (entry) {
-            // Explicit entry exists
             if (entry.value === true) {
                 yes++;
                 isSuccess = true;
@@ -114,16 +102,11 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
                  isSuccess = false;
             }
             else if (entry.value !== null && entry.value !== '') {
-                 yes++; // value exists means success
+                 yes++; 
                  isSuccess = true;
             }
         } else {
-            // No explicit entry - infer based on frequency
             if (habit?.frequency === 'everyday' || !habit?.frequency) {
-                // If it's today (i===0), and no entry, it's not "missed" yet? 
-                // BUT user wants correct completion rate. Usually "today pending" doesn't count as missed.
-                // However, if we don't count it, completion is 100% if only yesterday was done.
-                // Let's count it as missed if it's NOT today.
                 if (i > 0) {
                    no++;
                 }
@@ -131,19 +114,12 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
             }
         }
 
-        // Streak Calculation
         if (!streakBroken) {
             if (isSuccess) {
                 currentStreak++;
             } else {
-                // If it's today and not done, streak is maintained from yesterday?
-                // Standard logic: Current Streak is contiguous days ENDING today or yesterday.
-                // If today is done -> Streak++
-                // If today is NOT done -> Streak is yesterday's streak.
-                // UNLESS yesterday was also not done -> Streak = 0.
                 if (i === 0 && !isSuccess) {
-                    // Today not done. Continue to check yesterday.
-                    // Do nothing.
+                    // today pending
                 } else {
                     streakBroken = true;
                 }
@@ -151,10 +127,45 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
         }
     }
 
+    // Numeric Stats Calculation
+    let numericTotal = 0;
+    let numericCount = 0;
+    let numericBest = 0;
+    const dayTotals: Record<string, number> = {};
+    const dayCounts: Record<string, number> = {};
+
+    if (habit?.type !== 'yes-no') {
+        explicitEntries.forEach(e => {
+            const val = parseFloat(String(e.value));
+            if (!isNaN(val)) {
+                numericTotal += val;
+                numericCount++;
+                if (val > numericBest) numericBest = val;
+                
+                // Day of Week Stats
+                const day = new Date(e.date).toLocaleDateString('en-US', { weekday: 'short' });
+                dayTotals[day] = (dayTotals[day] || 0) + val;
+                dayCounts[day] = (dayCounts[day] || 0) + 1;
+            }
+        });
+    }
+
+    const numericAvg = numericCount > 0 ? Math.round((numericTotal / numericCount) * 10) / 10 : 0;
+    
+    // Find Best Day by Average
+    let bestDay = '-';
+    let maxDayAvg = 0;
+    Object.keys(dayTotals).forEach(day => {
+        const avg = dayTotals[day] / dayCounts[day];
+        if (avg > maxDayAvg) {
+            maxDayAvg = avg;
+            bestDay = day;
+        }
+    });
+
     const totalCalculated = yes + no;
     const rate = totalCalculated > 0 ? Math.round((yes / totalCalculated) * 100) : 0;
     
-    // Motivational Message
     let msg = "Start building your habit!";
     if (rate >= 90) msg = "You're on fire! 🔥";
     else if (rate >= 50) msg = "Keep it up! 👍";
@@ -168,6 +179,11 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
       message: msg,
       yesCount: yes,
       noCount: no,
+      numericTotal,
+      numericAvg,
+      numericBest,
+      bestDay,
+      dayStats: dayTotals // Simplified to totals for now or averages if preferred
     });
   };
 
@@ -179,213 +195,311 @@ export default function AnalyticsScreen({ route, navigation }: Props) {
       
       setHabitDetails(updated);
       setEditModalVisible(false);
-      
-      navigation.setOptions({ title: editName }); 
+      setEditModalVisible(false);
+  };
+
+  const handleDelete = () => {
+      Alert.alert(
+          "Delete Habit",
+          "Are you sure you want to delete this habit? All history will be lost.",
+          [
+              { text: "Cancel", style: "cancel" },
+              { 
+                  text: "Delete", 
+                  style: "destructive",
+                  onPress: async () => {
+                      await deleteHabit(habitId);
+                      setEditModalVisible(false);
+                      navigation.navigate('Home');
+                  }
+              }
+          ]
+      );
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>{habitDetails ? habitDetails.name : habitName}</Text>
-      
-      {/* Score Card */}
-      <View style={[styles.card, styles.scoreCard]}>
-          <Text style={styles.scoreTitle}>Habit Score</Text>
-          <Text style={styles.scoreValue}>{stats.score}</Text>
-          <Text style={styles.motive}>{stats.message}</Text>
-      </View>
+    <View style={styles.screen}>
+        <Header 
+            title="Analytics" 
+            showBack 
+            onBack={() => navigation.goBack()}
+            rightAction={
+                <TouchableOpacity onPress={() => setEditModalVisible(true)}>
+                    <Ionicons name="pencil" size={20} color={THEME.colors.primary} />
+                </TouchableOpacity>
+            }
+        />
+        <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.habitTitle}>{habitDetails ? habitDetails.name : habitName}</Text>
+        
+        <Card style={styles.scoreCard}>
+            <Text style={styles.scoreTitle}>Habit Score</Text>
+            <Text style={styles.scoreValue}>{stats.score}</Text>
+            <Text style={styles.motive}>{stats.message}</Text>
+        </Card>
 
-      <View style={styles.statsRow}>
-          <View style={[styles.miniCard, { backgroundColor: '#e3f2fd' }]}>
-              <Text style={styles.miniLabel}>Streak</Text>
-              <Text style={[styles.miniValue, { color: '#1565c0' }]}>{stats.currentStreak} days</Text>
-          </View>
-          <View style={[styles.miniCard, { backgroundColor: '#e8f5e9' }]}>
-              <Text style={styles.miniLabel}>Completion</Text>
-              <Text style={[styles.miniValue, { color: '#2e7d32' }]}>{stats.completionRate}%</Text>
-          </View>
-      </View>
-
-      <View style={styles.card}>
-          <Text style={styles.subHeader}>Breakdown</Text>
-          <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownText}>✅ Completed: {stats.yesCount}</Text>
-              <Text style={styles.breakdownText}>❌ Missed: {stats.noCount}</Text>
-              <Text style={styles.breakdownText}>📝 Total Logged: {stats.totalCount}</Text>
-          </View>
-      </View>
-
-      <Text style={styles.subHeader}>History Log</Text>
-      {entries.map((entry, index) => (
-        <View key={index} style={styles.historyRow}>
-          <Text style={styles.date}>{entry.date}</Text>
-          <Text style={styles.value}>
-              {entry.value === true ? 'Yes' : entry.value === false ? 'No' : String(entry.value)}
-          </Text>
+        <View style={styles.statsRow}>
+            {habitDetails?.type === 'yes-no' ? (
+                <>
+                <Card style={[styles.miniCard, { backgroundColor: '#e3f2fd', borderWidth: 0 }]}>
+                    <Text style={styles.miniLabel}>Streak</Text>
+                    <Text style={[styles.miniValue, { color: '#1565c0' }]}>{stats.currentStreak} days</Text>
+                </Card>
+                <Card style={[styles.miniCard, { backgroundColor: '#e8f5e9', borderWidth: 0, marginLeft: 16 }]}>
+                    <Text style={styles.miniLabel}>Completion</Text>
+                    <Text style={[styles.miniValue, { color: '#2e7d32' }]}>{stats.completionRate}%</Text>
+                </Card>
+                </>
+            ) : (
+                <>
+                <Card style={[styles.miniCard, { backgroundColor: '#e0f7fa', borderWidth: 0 }]}>
+                    <Text style={styles.miniLabel}>Total</Text>
+                    <Text style={[styles.miniValue, { color: '#006064' }]}>{stats.numericTotal}</Text>
+                </Card>
+                <Card style={[styles.miniCard, { backgroundColor: '#fff3e0', borderWidth: 0, marginLeft: 16 }]}>
+                    <Text style={styles.miniLabel}>Average</Text>
+                    <Text style={[styles.miniValue, { color: '#e65100' }]}>{stats.numericAvg}</Text>
+                </Card>
+                </>
+            )}
         </View>
-      ))}
 
-      <Modal
-        visible={editModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setEditModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>Edit Habit</Text>
-                <Text style={styles.label}>Name</Text>
-                <TextInput
-                    style={styles.input}
-                    value={editName}
-                    onChangeText={setEditName}
-                    placeholder="Habit Name"
-                />
-                <View style={styles.modalActions}>
-                    <Button title="Cancel" onPress={() => setEditModalVisible(false)} color="#999" />
-                    <Button title="Save" onPress={handleSaveEdit} />
+        <Card style={styles.card}>
+            <Text style={styles.subHeader}>Deep Dive</Text>
+            {habitDetails?.type === 'yes-no' ? (
+                <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownText}>✅ Completed: {stats.yesCount}</Text>
+                    <Text style={styles.breakdownText}>❌ Missed: {stats.noCount}</Text>
+                    <Text style={styles.breakdownText}>📝 Total Logged: {stats.totalCount}</Text>
+                </View>
+            ) : (
+                 <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownText}>🏆 Personal Best: {stats.numericBest}</Text>
+                    <Text style={styles.breakdownText}>📅 Best Performer: {stats.bestDay}</Text>
+                    <Text style={styles.breakdownText}>📝 Total Entries: {stats.totalCount}</Text>
+                    
+                    <View style={{ marginTop: 16 }}>
+                        <Text style={[styles.breakdownText, { fontWeight: 'bold' }]}>Weekly Volume</Text>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+                            {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(day => (
+                                <View key={day} style={{ alignItems: 'center' }}>
+                                    <View style={{ 
+                                        height: 60, 
+                                        width: 8, 
+                                        backgroundColor: '#f0f0f0', 
+                                        borderRadius: 4, 
+                                        justifyContent: 'flex-end',
+                                        overflow: 'hidden'
+                                    }}>
+                                        <View style={{ 
+                                            height: `${Math.min(((stats.dayStats[day] || 0) / (stats.numericBest || 1)) * 100, 100)}%`, 
+                                            backgroundColor: THEME.colors.primary,
+                                            borderRadius: 4
+                                        }} />
+                                    </View>
+                                    <Text style={{ fontSize: 10, color: '#999', marginTop: 4 }}>{day.charAt(0)}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                 </View>
+            )}
+        </Card>
+
+        <View style={{ marginTop: 24 }}>
+            <Text style={[styles.subHeader, { marginLeft: 4 }]}>History Log</Text>
+            {entries.length === 0 ? (
+                <Text style={styles.emptyText}>No entries yet.</Text>
+            ) : (
+                entries.map((entry, index) => (
+                    <Card key={index} style={styles.historyCard} variant="flat">
+                        <Text style={styles.date}>{entry.date}</Text>
+                        <View style={styles.valueBadget}>
+                            <Text style={styles.valueText}>
+                                {entry.value === true ? 'Yes' : entry.value === false ? 'No' : String(entry.value)}
+                            </Text>
+                        </View>
+                    </Card>
+                ))
+            )}
+        </View>
+
+        <Modal
+            visible={editModalVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setEditModalVisible(false)}
+        >
+            <View style={styles.modalOverlay}>
+                <View style={styles.modalContent}>
+                    <Text style={styles.modalTitle}>Edit Habit</Text>
+                    <Text style={styles.label}>Name</Text>
+                    <TextInput
+                        style={styles.input}
+                        value={editName}
+                        onChangeText={setEditName}
+                        placeholder="Habit Name"
+                    />
+                    <View style={styles.modalActions}>
+                        <Button title="Cancel" variant="text" onPress={() => setEditModalVisible(false)} style={{ flex: 1 }} />
+                        <Button title="Save" onPress={handleSaveEdit} style={{ flex: 1 }} />
+                    </View>
+                    <Button 
+                        title="Delete Habit" 
+                        variant="danger" 
+                        onPress={handleDelete} 
+                        style={{ marginTop: 16, width: '100%' }}
+                    />
                 </View>
             </View>
-        </View>
-      </Modal>
-    </ScrollView>
+        </Modal>
+        </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    backgroundColor: '#fff',
-    flexGrow: 1,
+  screen: {
+      flex: 1,
+      backgroundColor: THEME.colors.background
   },
-  title: {
-    fontSize: 28,
+  container: {
+    padding: THEME.spacing.md,
+    paddingBottom: 40
+  },
+  habitTitle: {
+    fontSize: THEME.fonts.size.h2,
     fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
+    marginBottom: THEME.spacing.lg,
+    color: THEME.colors.text,
     textAlign: 'center',
   },
   card: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#f0f0f0',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 8,
-    elevation: 2,
+      marginBottom: THEME.spacing.md
   },
   scoreCard: {
       alignItems: 'center',
-      backgroundColor: '#f8f9fa',
-      borderColor: '#e9ecef'
+      marginBottom: THEME.spacing.lg,
+      backgroundColor: THEME.colors.surface
   },
   scoreTitle: {
-      fontSize: 14,
+      fontSize: 12,
       textTransform: 'uppercase',
-      color: '#6c757d',
-      fontWeight: '600'
+      color: THEME.colors.textLight,
+      fontWeight: '600',
+      letterSpacing: 1
   },
   scoreValue: {
       fontSize: 48,
       fontWeight: 'bold',
-      color: '#333',
+      color: THEME.colors.primary,
       marginVertical: 4
   },
   motive: {
       fontSize: 16,
-      color: '#007AFF',
+      color: THEME.colors.text,
       fontWeight: '500'
   },
   statsRow: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: 20
+      marginBottom: THEME.spacing.lg
   },
   miniCard: {
       flex: 1,
-      padding: 16,
-      borderRadius: 12,
       alignItems: 'center',
-      marginHorizontal: 4
+      paddingVertical: 20
   },
   miniLabel: {
       fontSize: 12,
       color: '#555',
-      marginBottom: 4
+      marginBottom: 4,
+      textTransform: 'uppercase'
   },
   miniValue: {
-      fontSize: 20,
+      fontSize: 24,
       fontWeight: 'bold'
   },
   subHeader: {
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 12,
-    color: '#333',
-    marginLeft: 4
+    color: THEME.colors.text
   },
   breakdownRow: {
       marginTop: 8
   },
   breakdownText: {
       fontSize: 16,
-      color: '#444',
+      color: THEME.colors.text,
       marginBottom: 8
   },
-  historyRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f5f5f5',
-    alignItems: 'center'
+  historyCard: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: THEME.colors.border,
+      borderRadius: 0,
+      paddingHorizontal: 0
   },
   date: {
     fontSize: 16,
-    color: '#555',
+    color: THEME.colors.text,
   },
-  value: {
-    fontSize: 16,
+  valueBadget: {
+      backgroundColor: THEME.colors.background,
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+      borderRadius: 12
+  },
+  valueText: {
+    fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: THEME.colors.text,
+  },
+  emptyText: {
+      color: THEME.colors.textLight,
+      fontStyle: 'italic',
+      marginTop: 8
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: THEME.colors.overlay,
     justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
+    padding: 24
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: THEME.colors.surface,
     padding: 24,
-    borderRadius: 12,
-    width: '80%',
-    elevation: 5
+    borderRadius: THEME.borderRadius.lg,
+    width: '100%',
+    ...THEME.shadows.strong
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 16,
-    textAlign: 'center'
+    color: THEME.colors.text
   },
   label: {
       fontSize: 14,
-      color: '#666',
+      color: THEME.colors.textLight,
       marginBottom: 8
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.borderRadius.md,
     padding: 12,
     fontSize: 16,
-    marginBottom: 24
+    marginBottom: 24,
+    color: THEME.colors.text
   },
   modalActions: {
     flexDirection: 'row',
-    justifyContent: 'space-between'
+    justifyContent: 'space-between',
+    gap: 12
   }
 });

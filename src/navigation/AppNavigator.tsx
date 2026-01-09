@@ -43,7 +43,10 @@ export default function AppNavigator() {
 
   return (
     <NavigationContainer>
-      <Stack.Navigator initialRouteName={isFirstLaunch ? 'Onboarding' : 'Home'}>
+      <Stack.Navigator 
+        initialRouteName={isFirstLaunch ? 'Onboarding' : 'Home'}
+        screenOptions={{ headerShown: false }}
+      >
         <Stack.Screen name="Onboarding" component={OnboardingScreen} options={{ headerShown: false }} />
         <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'My Habits' }} />
         <Stack.Screen name="AddHabit" component={AddHabitScreen} options={{ title: 'New Habit' }} />

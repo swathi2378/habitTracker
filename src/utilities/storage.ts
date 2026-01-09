@@ -24,6 +24,24 @@ export const getHabits = async (): Promise<Habit[]> => {
   }
 };
 
+export const deleteHabit = async (habitId: string): Promise<void> => {
+    try {
+        // 1. Remove from Habits List
+        const storedHabits = await getHabits();
+        const updatedHabits = storedHabits.filter(h => h.id !== habitId);
+        await AsyncStorage.setItem(HABITS_KEY, JSON.stringify(updatedHabits));
+
+        // 2. Remove all related entries
+        const storedEntries = await getAllEntries();
+        const updatedEntries = storedEntries.filter(e => e.habitId !== habitId);
+        await AsyncStorage.setItem(ENTRIES_KEY, JSON.stringify(updatedEntries));
+
+    } catch (e) {
+        console.error('Failed to delete habit', e);
+        throw e;
+    }
+}
+
 export const saveEntry = async (entry: Entry): Promise<void> => {
   try {
     const storedEntries = await getAllEntries();

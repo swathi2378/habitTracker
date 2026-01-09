@@ -1,11 +1,27 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, Switch, ScrollView, Platform, TouchableOpacity, Alert } from 'react-native';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
+import { 
+    View, 
+    Text, 
+    TextInput, 
+    StyleSheet, 
+    Switch, 
+    ScrollView, 
+    Platform, 
+    TouchableOpacity, 
+    Alert,
+    KeyboardAvoidingView
+} from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { saveHabit } from '../utilities/storage';
 import { Habit } from '../utilities/types';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { registerForPushNotificationsAsync, scheduleHabitReminder } from '../utilities/notifications';
+import { THEME } from '../utilities/theme';
+import { Header } from '../components/Header';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { Ionicons } from '@expo/vector-icons';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AddHabit'>;
 
@@ -26,9 +42,13 @@ export default function AddHabitScreen({ navigation }: Props) {
       registerForPushNotificationsAsync();
   }, []);
 
+  useLayoutEffect(() => {
+      navigation.setOptions({ headerShown: false });
+  }, [navigation]);
+
   const handleSave = async () => {
     if (!habitName.trim() || !question.trim()) {
-      alert('Please enter a habit name and question');
+      Alert.alert('Missing Information', 'Please enter a habit name and a question.');
       return;
     }
 
@@ -43,7 +63,6 @@ export default function AddHabitScreen({ navigation }: Props) {
       reminderTime: reminderEnabled ? reminderTime.toISOString() : null,
     };
     
-    // Schedule Notification if enabled
     if (reminderEnabled) {
         try {
             const notifId = await scheduleHabitReminder(
@@ -70,106 +89,183 @@ export default function AddHabitScreen({ navigation }: Props) {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.label}>Habit Name</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="e.g. Reading, Exercise"
-        value={habitName}
-        onChangeText={setHabitName}
-      />
+    <View style={styles.screen}>
+        <Header 
+            title="New Habit" 
+            showBack 
+            onBack={() => navigation.goBack()} 
+        />
+        <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{ flex: 1 }}
+        >
+            <ScrollView contentContainerStyle={styles.container}>
+            
+            <Card style={styles.sectionCard}>
+                <Text style={styles.label}>What do you want to track?</Text>
+                <TextInput
+                    style={styles.input}
+                    placeholder="e.g. Read Books, Drink Water"
+                    value={habitName}
+                    onChangeText={setHabitName}
+                    placeholderTextColor={THEME.colors.textLight}
+                />
 
-      <Text style={styles.label}>Question to ask yourself?</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="e.g. Did I read 10 pages today?"
-        value={question}
-        onChangeText={setQuestion}
-      />
+                <Text style={styles.label}>Question for yourself?</Text>
+                <TextInput
+                    style={styles.input}
+                    placeholder="e.g. Did I read 10 pages today?"
+                    value={question}
+                    onChangeText={setQuestion}
+                    placeholderTextColor={THEME.colors.textLight}
+                />
+            </Card>
 
-      <View style={styles.row}>
-        <Text style={styles.label}>Track Type</Text>
-        <View style={styles.switchContainer}>
-          <Text style={styles.switchLabel}>{isTrackTypeYesNo ? 'Yes/No' : 'Numeric'}</Text>
-          <Switch value={isTrackTypeYesNo} onValueChange={setIsTrackTypeYesNo} />
-        </View>
-      </View>
+            <Card style={styles.sectionCard}>
+                <View style={styles.row}>
+                    <View>
+                        <Text style={styles.label}>Tracking Style</Text>
+                        <Text style={styles.subLabel}>
+                            {isTrackTypeYesNo ? 'Simple Yes/No' : 'Numeric Value (e.g. 5 cups)'}
+                        </Text>
+                    </View>
+                    <Switch 
+                        value={isTrackTypeYesNo} 
+                        onValueChange={setIsTrackTypeYesNo} 
+                        trackColor={{ false: '#767577', true: THEME.colors.primary }}
+                        thumbColor={'#f4f3f4'}
+                    />
+                </View>
+            </Card>
 
-      {/* Frequency Selector */}
-      <Text style={styles.label}>Frequency</Text>
-      <View style={styles.pillContainer}>
-          {['everyday', 'weekly', 'custom'].map((f) => (
-              <TouchableOpacity 
-                key={f} 
-                style={[styles.pill, frequency === f && styles.pillActive]}
-                onPress={() => setFrequency(f as any)}
-              >
-                  <Text style={[styles.pillText, frequency === f && styles.pillTextActive]}>
-                      {f.charAt(0).toUpperCase() + f.slice(1)}
-                  </Text>
-              </TouchableOpacity>
-          ))}
-      </View>
+            <Card style={styles.sectionCard}>
+                <Text style={styles.label}>Frequency</Text>
+                <View style={styles.pillContainer}>
+                    {['everyday', 'weekly', 'custom'].map((f) => {
+                        let iconName: any = 'calendar';
+                        if (f === 'everyday') iconName = 'infinite';
+                        if (f === 'weekly') iconName = 'calendar';
+                        if (f === 'custom') iconName = 'options';
 
-      {/* Reminder Section */}
-      <View style={[styles.row, { marginTop: 20 }]}>
-          <Text style={styles.label}>Daily Reminder</Text>
-          <Switch value={reminderEnabled} onValueChange={setReminderEnabled} />
-      </View>
-      
-      {reminderEnabled && (
-          <View style={styles.timePickerContainer}>
-               <Text style={styles.timeDisplay}>
-                   {reminderTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-               </Text>
-               <Button title="Set Time" onPress={() => setShowTimePicker(true)} />
-               {showTimePicker && (
-                   <DateTimePicker
-                       value={reminderTime}
-                       mode="time"
-                       display="default"
-                       onChange={onTimeChange}
-                   />
-               )}
-          </View>
-      )}
+                        return (
+                        <TouchableOpacity 
+                            key={f} 
+                            style={[
+                                styles.pill, 
+                                frequency === f && styles.pillActive
+                            ]}
+                            onPress={() => setFrequency(f as any)}
+                        >
+                            <Ionicons 
+                                name={iconName} 
+                                size={16} 
+                                color={frequency === f ? THEME.colors.primary : THEME.colors.textLight} 
+                                style={{ marginRight: 6 }}
+                            />
+                            <Text style={[
+                                styles.pillText, 
+                                frequency === f && styles.pillTextActive
+                            ]}>
+                                {f.charAt(0).toUpperCase() + f.slice(1)}
+                            </Text>
+                        </TouchableOpacity>
+                        )
+                    })}
+                </View>
+            </Card>
 
-      {/* Notes Section */}
-      <Text style={[styles.label, { marginTop: 20 }]}>Notes (Optional)</Text>
-      <TextInput
-          style={[styles.input, styles.textArea]}
-          placeholder="Add any details..."
-          value={notes}
-          onChangeText={setNotes}
-          multiline
-          numberOfLines={3}
-      />
+            <Card style={styles.sectionCard}>
+                <View style={styles.row}>
+                    <View>
+                        <Text style={styles.label}>Daily Reminder</Text>
+                        <Text style={styles.subLabel}>Get notified to complete this habit</Text>
+                    </View>
+                    <Switch 
+                        value={reminderEnabled} 
+                        onValueChange={setReminderEnabled}
+                        trackColor={{ false: '#767577', true: THEME.colors.primary }} 
+                    />
+                </View>
+                
+                {reminderEnabled && (
+                    <View style={styles.timePickerContainer}>
+                        <Text style={styles.timeDisplay}>
+                            {reminderTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
+                        <Button 
+                            title="Set Time" 
+                            variant="outline" 
+                            size="sm" 
+                            onPress={() => setShowTimePicker(true)} 
+                        />
+                        {showTimePicker && (
+                            <DateTimePicker
+                                value={reminderTime}
+                                mode="time"
+                                display="default"
+                                onChange={onTimeChange}
+                            />
+                        )}
+                    </View>
+                )}
+            </Card>
 
-      <Button title="Save Habit" onPress={handleSave} />
-    </ScrollView>
+            <Card style={styles.sectionCard}>
+                <Text style={styles.label}>Notes (Optional)</Text>
+                <TextInput
+                    style={[styles.input, styles.textArea]}
+                    placeholder="Add any motivations or details..."
+                    value={notes}
+                    onChangeText={setNotes}
+                    multiline
+                    numberOfLines={3}
+                    placeholderTextColor={THEME.colors.textLight}
+                />
+            </Card>
+
+            <View style={styles.footer}>
+                <Button title="Create Habit" onPress={handleSave} size="lg" />
+            </View>
+
+            </ScrollView>
+        </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+      flex: 1,
+      backgroundColor: THEME.colors.background
+  },
   container: {
-    padding: 20,
-    backgroundColor: '#fff',
-    flexGrow: 1,
+    padding: THEME.spacing.md,
+    paddingBottom: 100
+  },
+  sectionCard: {
+      marginBottom: THEME.spacing.md,
+      padding: THEME.spacing.lg
   },
   label: {
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '600',
     marginBottom: 8,
-    color: '#333',
+    color: THEME.colors.text,
+  },
+  subLabel: {
+      fontSize: 12,
+      color: THEME.colors.textLight,
+      marginTop: 2
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
+    borderColor: THEME.colors.border,
+    borderRadius: THEME.borderRadius.md,
     padding: 12,
     fontSize: 16,
-    marginBottom: 20,
-    backgroundColor: '#fff',
+    marginBottom: 16,
+    backgroundColor: THEME.colors.background,
+    color: THEME.colors.text
   },
   textArea: {
       height: 80,
@@ -179,50 +275,51 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10
   },
   switchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  switchLabel: {
-    marginRight: 10,
-    fontSize: 16,
-    color: '#555',
-  },
   pillContainer: {
       flexDirection: 'row',
-      marginBottom: 20
+      marginTop: 8
   },
   pill: {
       paddingVertical: 8,
       paddingHorizontal: 16,
-      borderRadius: 20,
-      backgroundColor: '#f0f0f0',
-      marginRight: 10
+      borderRadius: THEME.borderRadius.round,
+      backgroundColor: THEME.colors.background,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: THEME.colors.border
   },
   pillActive: {
-      backgroundColor: '#007AFF'
+      backgroundColor: THEME.colors.primary + '15', // light tint
+      borderColor: THEME.colors.primary
   },
   pillText: {
-      color: '#333'
+      color: THEME.colors.textLight,
+      fontSize: 14
   },
   pillTextActive: {
-      color: '#fff',
+      color: THEME.colors.primary,
       fontWeight: 'bold'
   },
   timePickerContainer: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginBottom: 20,
+      marginTop: 16,
       justifyContent: 'space-between',
-      backgroundColor: '#f9f9f9',
-      padding: 10,
-      borderRadius: 8
+      backgroundColor: THEME.colors.background,
+      padding: 12,
+      borderRadius: THEME.borderRadius.md
   },
   timeDisplay: {
       fontSize: 18,
       fontWeight: 'bold',
-      color: '#333'
+      color: THEME.colors.text
+  },
+  footer: {
+      marginTop: 20
   }
 });

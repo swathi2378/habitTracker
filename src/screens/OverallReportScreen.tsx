@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { getHabits, getEntriesForHabit } from '../utilities/storage';
-import { Habit, Entry } from '../utilities/types';
 import { Ionicons } from '@expo/vector-icons';
+import { THEME } from '../utilities/theme';
+import { Header } from '../components/Header';
+import { Card } from '../components/Card';
 
-export default function OverallReportScreen() {
+export default function OverallReportScreen({ navigation }: any) {
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState({
     globalRate: 0,
@@ -57,90 +59,87 @@ export default function OverallReportScreen() {
   };
 
   return (
-    <ScrollView 
-        contentContainerStyle={styles.container}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={loadData} />}
-    >
-      <Text style={styles.title}>Overall Report</Text>
+    <View style={styles.screen}>
+         <Header 
+            title="Summary Report" 
+            showBack 
+            onBack={() => navigation.goBack()}
+         />
+        <ScrollView 
+            contentContainerStyle={styles.container}
+            refreshControl={<RefreshControl refreshing={loading} onRefresh={loadData} tintColor={THEME.colors.primary} />}
+        >
+        
+        <Card style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Global Success Rate</Text>
+            <Text style={styles.summaryValue}>{stats.globalRate}%</Text>
+        </Card>
 
-      <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Global Success Rate</Text>
-          <Text style={styles.summaryValue}>{stats.globalRate}%</Text>
-      </View>
+        <View style={styles.row}>
+            <Card style={[styles.miniCard, { backgroundColor: '#e8f5e9', borderWidth: 0 }]}>
+                <Ionicons name="trophy" size={24} color="#2e7d32" />
+                <Text style={styles.miniLabel}>Best Habit</Text>
+                <Text style={styles.miniValue} numberOfLines={1}>{stats.bestHabit}</Text>
+            </Card>
+            <Card style={[styles.miniCard, { backgroundColor: '#ffebee', borderWidth: 0, marginLeft: 16 }]}>
+                <Ionicons name="alert-circle" size={24} color="#c62828" />
+                <Text style={styles.miniLabel}>Needs Focus</Text>
+                <Text style={styles.miniValue} numberOfLines={1}>{stats.worstHabit}</Text>
+            </Card>
+        </View>
 
-      <View style={styles.row}>
-          <View style={[styles.miniCard, { backgroundColor: '#e8f5e9' }]}>
-              <Ionicons name="trophy" size={24} color="#2e7d32" />
-              <Text style={styles.miniLabel}>Best Habit</Text>
-              <Text style={styles.miniValue} numberOfLines={1}>{stats.bestHabit}</Text>
-          </View>
-          <View style={[styles.miniCard, { backgroundColor: '#ffebee' }]}>
-              <Ionicons name="alert-circle" size={24} color="#c62828" />
-              <Text style={styles.miniLabel}>Needs Focus</Text>
-              <Text style={styles.miniValue} numberOfLines={1}>{stats.worstHabit}</Text>
-          </View>
-      </View>
+        <Text style={styles.subHeader}>Habit Performance</Text>
+        {stats.habitStats.map((item, index) => (
+            <Card key={index} style={styles.habitRow} variant="flat">
+                <View style={styles.habitInfo}>
+                    <Text style={styles.habitName}>{item.name}</Text>
+                    <Text style={[styles.habitRate, { color: item.rate >= 50 ? THEME.colors.success : THEME.colors.error }]}>{item.rate}%</Text>
+                </View>
+                <View style={styles.progressBarBg}>
+                    <View style={[styles.progressBarFill, { width: `${item.rate}%`, backgroundColor: item.rate >= 50 ? THEME.colors.success : THEME.colors.error }]} />
+                </View>
+            </Card>
+        ))}
 
-      <Text style={styles.subHeader}>Habit Performance</Text>
-      {stats.habitStats.map((item, index) => (
-          <View key={index} style={styles.habitRow}>
-              <View style={styles.habitInfo}>
-                  <Text style={styles.habitName}>{item.name}</Text>
-                  <Text style={styles.habitRate}>{item.rate}%</Text>
-              </View>
-              <View style={styles.progressBarBg}>
-                  <View style={[styles.progressBarFill, { width: `${item.rate}%`, backgroundColor: item.rate >= 50 ? '#34C759' : '#FF3B30' }]} />
-              </View>
-          </View>
-      ))}
-
-    </ScrollView>
+        </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    backgroundColor: '#fff',
-    flexGrow: 1,
+  screen: {
+      flex: 1,
+      backgroundColor: THEME.colors.background
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
+  container: {
+    padding: THEME.spacing.md,
+    paddingBottom: 40,
   },
   summaryCard: {
-      backgroundColor: '#f0f4f8',
-      padding: 24,
-      borderRadius: 16,
+      padding: 32,
       alignItems: 'center',
-      marginBottom: 20,
-      borderWidth: 1,
-      borderColor: '#e1e4e8'
+      marginBottom: THEME.spacing.lg,
+      backgroundColor: THEME.colors.surface
   },
   summaryLabel: {
-      fontSize: 16,
-      color: '#555',
+      fontSize: 14,
+      color: THEME.colors.textLight,
       textTransform: 'uppercase',
       letterSpacing: 1,
       marginBottom: 8
   },
   summaryValue: {
-      fontSize: 48,
+      fontSize: 56,
       fontWeight: 'bold',
-      color: '#007AFF'
+      color: THEME.colors.primary
   },
   row: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: 24
+      marginBottom: THEME.spacing.xl
   },
   miniCard: {
       flex: 1,
       padding: 16,
-      borderRadius: 12,
-      marginHorizontal: 4,
       alignItems: 'center',
       justifyContent: 'center'
   },
@@ -153,36 +152,41 @@ const styles = StyleSheet.create({
   miniValue: {
       fontSize: 16,
       fontWeight: 'bold',
-      color: '#333',
+      color: THEME.colors.text,
       textAlign: 'center'
   },
   subHeader: {
       fontSize: 20,
       fontWeight: 'bold',
       marginBottom: 16,
-      color: '#333'
+      color: THEME.colors.text
   },
   habitRow: {
-      marginBottom: 16
+      marginBottom: 0,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: '#f0f0f0',
+      borderRadius: 0,
+      marginHorizontal: 0,
+      paddingHorizontal: 0
   },
   habitInfo: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      marginBottom: 6
+      marginBottom: 8
   },
   habitName: {
       fontSize: 16,
       fontWeight: '500',
-      color: '#333'
+      color: THEME.colors.text
   },
   habitRate: {
       fontSize: 14,
-      fontWeight: 'bold',
-      color: '#666'
+      fontWeight: 'bold'
   },
   progressBarBg: {
       height: 8,
-      backgroundColor: '#f0f0f0',
+      backgroundColor: THEME.colors.background,
       borderRadius: 4,
       overflow: 'hidden'
   },

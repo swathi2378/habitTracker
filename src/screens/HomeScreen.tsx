@@ -1,27 +1,31 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useLayoutEffect } from 'react';
 import {
   View,
   Text,
   FlatList,
   StyleSheet,
-  TouchableOpacity,
   RefreshControl,
-  Button,
   Modal,
   TextInput,
   Alert,
-  ActionSheetIOS,
-  Platform
+  StatusBar,
+  LayoutAnimation,
+  Platform,
+  TouchableOpacity,
+  Animated,
+  Easing,
+  Image
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getHabits, getEntriesBetweenDates, saveEntry } from '../utilities/storage';
 import { Habit, Entry } from '../utilities/types';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-
-// Use strict typescript import for vector icons will require installing it or using expo/vector-icons
-// Since this is an Expo project, we can use @expo/vector-icons
 import { Ionicons } from '@expo/vector-icons';
+import { THEME } from '../utilities/theme';
+import { Header } from '../components/Header';
+import { HabitCard } from '../components/HabitCard';
+import { Button } from '../components/Button';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
@@ -38,19 +42,20 @@ export default function HomeScreen({ navigation }: Props) {
   const [inputValue, setInputValue] = useState('');
 
   // Calendar State
-  // weekStart is the date of the first day (say, 6 days ago relative to view reference).
-  // But easier to track "referenceDate" (usually end of the week).
-  // Initial state is Today.
   const [referenceDate, setReferenceDate] = useState(new Date());
 
-  // Check if we are viewing the current week (to restrict "Next")
+  // Animation State
+  const [scaleAnim] = useState(new Animated.Value(0));
+
+  useLayoutEffect(() => {
+      navigation.setOptions({ headerShown: false });
+  }, [navigation]);
+
   const isCurrentWeek = useMemo(() => {
     const today = new Date();
-    // Compare dates only
     return referenceDate.toDateString() === today.toDateString();
   }, [referenceDate]);
 
-  // Calculate the 7 days ending at referenceDate
   const weekDates = useMemo(() => {
     const dates = [];
     for (let i = 6; i >= 0; i--) {
@@ -66,7 +71,7 @@ export default function HomeScreen({ navigation }: Props) {
     try {
       const storedHabits = await getHabits();
       const startDate = weekDates[0];
-      const endDate = weekDates[weekDates.length - 1]; // This is referenceDate string
+      const endDate = weekDates[weekDates.length - 1]; 
       const fetchedEntries = await getEntriesBetweenDates(startDate, endDate);
       
       const entriesMap: Record<string, Record<string, Entry>> = {};
@@ -75,6 +80,7 @@ export default function HomeScreen({ navigation }: Props) {
         entriesMap[e.habitId][e.date] = e;
       });
 
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setHabits(storedHabits);
       setEntries(entriesMap);
     } catch (error) {
@@ -95,27 +101,16 @@ export default function HomeScreen({ navigation }: Props) {
       if (direction === 'prev') {
           newRefDate.setDate(newRefDate.getDate() - 7);
       } else {
-          // Prevent going to future weeks beyond "Today" being the last day? 
-          // User requirement: "restrict from adding data to future dates".
-          // Viewing future dates is generally useless if you can't add data, but maybe they want to see blank?
-          // Let's allow browsing but enforce "Today" as max boundary for simplicity if that's what "restrict" implies visually.
-          // Or just allow browsing any week. "restrict from adding data" is specific to action.
-          // I will block going past "Today" for now to keep it simple and clean.
           if (isCurrentWeek) return; 
           newRefDate.setDate(newRefDate.getDate() + 7);
-          
-          // Cap at today
           const today = new Date();
-          if (newRefDate > today) {
-              setReferenceDate(today);
-              return;
-          }
+          if (newRefDate > today) setReferenceDate(today);
+          else setReferenceDate(newRefDate);
       }
       setReferenceDate(newRefDate);
   };
 
   const handleDayPress = async (habit: Habit, date: string) => {
-    // 1. Future Date Validation
     const todayStr = new Date().toISOString().split('T')[0];
     if (date > todayStr) {
         Alert.alert("Future Date", "You cannot add entries for future dates.");
@@ -124,13 +119,18 @@ export default function HomeScreen({ navigation }: Props) {
 
     const currentEntry = entries[habit.id]?.[date];
 
-    // 2. Interaction by Type
     if (habit.type === 'yes-no') {
         setSelectedHabitId(habit.id);
         setSelectedDate(date);
         setActionModalVisible(true);
+        // Animate in
+        scaleAnim.setValue(0);
+        Animated.spring(scaleAnim, {
+            toValue: 1,
+            friction: 5,
+            useNativeDriver: true
+        }).start();
     } else {
-      // Fill-in logic
       setSelectedHabitId(habit.id);
       setSelectedDate(date);
       setInputValue(currentEntry ? String(currentEntry.value) : '');
@@ -138,40 +138,23 @@ export default function HomeScreen({ navigation }: Props) {
     }
   };
 
-  // Helper to save logic
   const saveEntryValue = async (habitId: string, date: string, value: boolean | string | null) => {
-      // If null, we might want to delete. simpler to just store null or handle in UI.
-      // But my Entry type expects value to be boolean | string | number.
-      // Let's strictly delete or update. 
-      // Storage.ts `saveEntry` does upsert. 
-      // If value is null, I should probably handle "Delete".
-      // Updating `saveEntry` to handle null/undefined deletion is safer, OR just store it.
-      // Assuming my boolean logic:
-      // true = Yes
-      // false = No (X)
-      // undefined/null = Empty
-      
       const newEntry: Entry = {
         habitId,
         date,
-        value: value as any, // Cast for transparency if we allow null in practice or strict check
+        value: value as any, 
       };
       
-      // Update local state
       setEntries(prev => {
           const habitEntries = { ...prev[habitId] };
           if (value === null) {
-             delete habitEntries[date]; // Remove from UI
+             delete habitEntries[date]; 
           } else {
              habitEntries[date] = newEntry;
           }
           return { ...prev, [habitId]: habitEntries };
       });
 
-      // Persist (Need to handle null in storage? simpler to just save whatever for now)
-      // If I send null value, `saveEntry` will stringify it.
-      // Warning: if types.ts assumes strict boolean, this might break.
-      // I'll assume standard json serialization handles it.
       await saveEntry(newEntry);
   };
 
@@ -183,54 +166,41 @@ export default function HomeScreen({ navigation }: Props) {
   };
 
   const renderHeader = () => {
-      return (
-          <View>
-             {/* Navigation Header */}
-             <View style={styles.navHeader}>
-                 <TouchableOpacity onPress={() => handleWeekChange('prev')} style={styles.navButton}>
-                     <Ionicons name="chevron-back" size={24} color="#007AFF" />
-                     <Text style={styles.navText}>Prev</Text>
-                 </TouchableOpacity>
-                 
-                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                     <Text style={styles.weekTitle}>
-                         {new Date(weekDates[0]).toLocaleDateString(undefined, {month:'short', day:'numeric'})} 
-                         {' - '} 
-                         {new Date(weekDates[6]).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
-                     </Text>
-                     <TouchableOpacity 
-                        onPress={() => navigation.navigate('OverallReport')}
-                        style={{ marginLeft: 10 }}
-                     >
-                         <Ionicons name="stats-chart" size={20} color="#007AFF" />
-                     </TouchableOpacity>
-                 </View>
+      const startDate = new Date(weekDates[0]);
+      const endDate = new Date(weekDates[6]);
+      const dateRange = `${startDate.toLocaleDateString(undefined, {month:'short', day:'numeric'})} - ${endDate.toLocaleDateString(undefined, {month:'short', day:'numeric'})}`;
 
-                 <TouchableOpacity 
+      return (
+          <View style={styles.calendarStrip}>
+              <View style={styles.calendarHeader}>
+                  <TouchableOpacity onPress={() => handleWeekChange('prev')} style={styles.navButton}>
+                     <Ionicons name="chevron-back" size={20} color={THEME.colors.primary} />
+                  </TouchableOpacity>
+                  
+                  <Text style={styles.weekTitle}>{dateRange}</Text>
+
+                  <TouchableOpacity 
                     onPress={() => handleWeekChange('next')} 
                     disabled={isCurrentWeek}
-                    style={[styles.navButton, isCurrentWeek && styles.navButtonDisabled]}
-                 >
-                     <Text style={[styles.navText, isCurrentWeek && styles.navTextDisabled]}>Next</Text>
-                     <Ionicons name="chevron-forward" size={24} color={isCurrentWeek ? "#ccc" : "#007AFF"} />
-                 </TouchableOpacity>
-             </View>
+                    style={[styles.navButton, isCurrentWeek && { opacity: 0.3 }]}
+                  >
+                      <Ionicons name="chevron-forward" size={20} color={THEME.colors.primary} />
+                  </TouchableOpacity>
+              </View>
 
-             {/* Days Header */}
-             <View style={styles.headerRow}>
-                  <View style={styles.habitNameColumn}><Text style={styles.headerText}>Habit</Text></View>
-                  {weekDates.map(date => {
-                      const d = new Date(date);
-                      const dayName = d.toLocaleDateString('en-US', { weekday: 'narrow' });
-                      const dayNum = d.getDate();
-                      const isToday = date === new Date().toISOString().split('T')[0];
-                      return (
-                          <View key={date} style={styles.dateCell}>
-                              <Text style={[styles.dayName, isToday && styles.todayText]}>{dayName}</Text>
-                              <Text style={[styles.dayNum, isToday && styles.todayText]}>{dayNum}</Text>
-                          </View>
-                      )
-                  })}
+              <View style={styles.daysRow}>
+                   {weekDates.map(date => {
+                       const d = new Date(date);
+                       const dayName = d.toLocaleDateString('en-US', { weekday: 'narrow' });
+                       const dayNum = d.getDate();
+                       const isToday = date === new Date().toISOString().split('T')[0];
+                       return (
+                           <View key={date} style={[styles.dayHeaderCell, isToday && styles.todayHeaderCell]}>
+                               <Text style={[styles.dayName, isToday && styles.todayHeaderText]}>{dayName}</Text>
+                               <Text style={[styles.dayNum, isToday && styles.todayHeaderText]}>{dayNum}</Text>
+                           </View>
+                       )
+                   })}
               </View>
           </View>
       )
@@ -238,70 +208,61 @@ export default function HomeScreen({ navigation }: Props) {
 
   const renderHabitRow = ({ item }: { item: Habit }) => {
     return (
-      <View style={styles.row}>
-        <TouchableOpacity 
-            style={styles.habitNameColumn} 
-            onPress={() => navigation.navigate('Analytics', { habitId: item.id, habitName: item.name })}
-        >
-            <Text style={styles.habitName} numberOfLines={2}>{item.name}</Text>
-            {item.type === 'fill-in' && <Text style={styles.habitType}>123</Text>}
-        </TouchableOpacity>
-        
-        {weekDates.map(date => {
-            const entry = entries[item.id]?.[date];
-            const isToday = date === new Date().toISOString().split('T')[0];
-            
-            let content = null;
-            if (item.type === 'yes-no') {
-                if (entry?.value === true) {
-                    content = <Ionicons name="checkmark-circle" size={24} color="#34C759" />;
-                } else if (entry?.value === false) {
-                    content = <Ionicons name="close-circle" size={24} color="#FF3B30" />;
-                } else if (!isToday && new Date(date) < new Date() && (item.frequency === 'everyday' || !item.frequency)) {
-                    // Default to visual 'No' for past days if everyday freq (or legacy default)
-                    // We use opacity to distinguish "auto-no" from "explicit-no" if desired, or just same icon
-                    content = <Ionicons name="close-circle" size={24} color="#FF3B30" style={{ opacity: 0.3 }} />;
-                }
-            } else {
-                 if (entry?.value !== undefined && entry?.value !== null && entry?.value !== '') {
-                     content = <Text style={styles.valueText}>{String(entry.value)}</Text>;
-                 } else if (!isToday && new Date(date) < new Date() && (item.frequency === 'everyday' || !item.frequency)) {
-                     // Default for numeric
-                     content = <Text style={[styles.valueText, { color: '#FF3B30', opacity: 0.5 }]}>0</Text>;
-                 } else {
-                     content = <Text style={styles.placeholderText}>-</Text>;
-                 }
-            }
-
-            return (
-                <TouchableOpacity 
-                    key={date} 
-                    style={[styles.cell, isToday && styles.todayCell]}
-                    onPress={() => handleDayPress(item, date)}
-                >
-                    {content}
-                </TouchableOpacity>
-            )
-        })}
-      </View>
+      <HabitCard 
+        habit={item}
+        entries={entries[item.id] || {}}
+        weekDates={weekDates}
+        onDayPress={(date) => handleDayPress(item, date)}
+        onPress={() => navigation.navigate('Analytics', { habitId: item.id, habitName: item.name })}
+      />
     );
+  };
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good Morning ☀️';
+    if (hour < 18) return 'Good Afternoon 🌤️';
+    return 'Good Evening 🌙';
   };
 
   return (
     <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={THEME.colors.background} />
+      <Header 
+        title={getGreeting()}
+        subtitle="Let's crush your goals today!"
+        rightAction={
+            <TouchableOpacity onPress={() => navigation.navigate('OverallReport')}>
+                 <Ionicons name="stats-chart" size={24} color={THEME.colors.primary} />
+            </TouchableOpacity>
+        }
+      />
       {renderHeader()}
+      
       <FlatList
         data={habits}
         keyExtractor={(item) => item.id}
         renderItem={renderHabitRow}
         contentContainerStyle={styles.listContent}
         refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={loadData} />
+            <RefreshControl 
+                refreshing={loading} 
+                onRefresh={loadData} 
+                tintColor={THEME.colors.primary}
+            />
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No habits yet.</Text>
-            <Button title="Create First Habit" onPress={() => navigation.navigate('AddHabit')} />
+            <View style={styles.emptyIconContainer}>
+               <Ionicons name="leaf-outline" size={64} color={THEME.colors.success} />
+            </View>
+            <Text style={styles.emptyTitle}>No habits yet</Text>
+            <Text style={styles.emptyText}>Small steps lead to big changes. Start your journey now!</Text>
+            <Button 
+                title="Create First Habit" 
+                onPress={() => navigation.navigate('AddHabit')} 
+                size="md"
+            />
           </View>
         }
       />
@@ -309,86 +270,105 @@ export default function HomeScreen({ navigation }: Props) {
       <TouchableOpacity
            style={styles.fab}
            onPress={() => navigation.navigate('AddHabit')}
+           activeOpacity={0.8}
          >
-           <Text style={styles.fabText}>+</Text>
+           <Ionicons name="add" size={32} color="#FFF" />
       </TouchableOpacity>
 
+      {/* Action Modal */}
       <Modal
         visible={actionModalVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setActionModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>Mark Habit</Text>
+        <TouchableOpacity 
+            style={styles.modalOverlay} 
+            activeOpacity={1} 
+            onPress={() => setActionModalVisible(false)}
+        >
+            <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+                <Text style={styles.modalTitle}>Update Progress</Text>
                 <Text style={styles.modalSubtitle}>{selectedDate}</Text>
                 
-                <TouchableOpacity 
-                    style={[styles.actionButton, { backgroundColor: '#34C759' }]} // Green
-                    onPress={() => {
-                        if(selectedHabitId && selectedDate) saveEntryValue(selectedHabitId, selectedDate, true);
-                        setActionModalVisible(false);
-                    }}
-                >
-                    <Ionicons name="checkmark-circle-outline" size={24} color="#fff" />
-                    <Text style={styles.actionButtonText}>Completed (Yes)</Text>
-                </TouchableOpacity>
+                <View style={styles.modalActionRow}>
+                     <TouchableOpacity 
+                        style={[styles.actionBtn, { backgroundColor: THEME.colors.success + '20' }]}
+                        onPress={() => {
+                            if(selectedHabitId && selectedDate) saveEntryValue(selectedHabitId, selectedDate, true);
+                            setActionModalVisible(false);
+                        }}
+                     >
+                         <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+                            <Ionicons name="checkmark-circle" size={48} color={THEME.colors.success} />
+                         </Animated.View>
+                         <Text style={[styles.actionLabel, { color: THEME.colors.success }]}>Completed</Text>
+                     </TouchableOpacity>
 
-                <TouchableOpacity 
-                    style={[styles.actionButton, { backgroundColor: '#FF3B30' }]} // Red
-                    onPress={() => {
-                        if(selectedHabitId && selectedDate) saveEntryValue(selectedHabitId, selectedDate, false);
-                        setActionModalVisible(false);
-                    }}
-                >
-                    <Ionicons name="close-circle-outline" size={24} color="#fff" />
-                    <Text style={styles.actionButtonText}>Missed (No)</Text>
-                </TouchableOpacity>
+                     <TouchableOpacity 
+                        style={[styles.actionBtn, { backgroundColor: THEME.colors.error + '20' }]}
+                        onPress={() => {
+                            if(selectedHabitId && selectedDate) saveEntryValue(selectedHabitId, selectedDate, false);
+                            setActionModalVisible(false);
+                        }}
+                     >
+                         <Ionicons name="close-circle" size={48} color={THEME.colors.error} />
+                         <Text style={[styles.actionLabel, { color: THEME.colors.error }]}>Missed</Text>
+                     </TouchableOpacity>
+                </View>
 
-                <TouchableOpacity 
-                    style={[styles.actionButton, { backgroundColor: '#ffcc00' }]} // Yellow/Orange for Clear
+                <Button 
+                    title="Clear Entry" 
+                    variant="text" 
                     onPress={() => {
                         if(selectedHabitId && selectedDate) saveEntryValue(selectedHabitId, selectedDate, null);
                         setActionModalVisible(false);
                     }}
-                >
-                    <Ionicons name="trash-outline" size={24} color="#fff" />
-                    <Text style={styles.actionButtonText}>Clear Entry</Text>
-                </TouchableOpacity>
-
-                <Button title="Cancel" onPress={() => setActionModalVisible(false)} color="#666" />
+                    style={{ marginTop: 16 }}
+                />
             </View>
-        </View>
+        </TouchableOpacity>
       </Modal>
 
+      {/* Input Modal */}
       <Modal
         visible={inputModalVisible}
         transparent
         animationType="fade"
         onRequestClose={() => setInputModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Update Entry</Text>
+         <TouchableOpacity 
+            style={styles.modalOverlay} 
+            activeOpacity={1} 
+            onPress={() => setInputModalVisible(false)}
+        >
+          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+            <Text style={styles.modalTitle}>Log Value</Text>
             <Text style={styles.modalSubtitle}>{selectedDate}</Text>
             <TextInput 
                 style={styles.modalInput}
                 value={inputValue}
                 onChangeText={setInputValue}
-                placeholder="Enter value"
+                placeholder="Enter value (e.g., 5, 10mins)"
                 autoFocus
-                keyboardType={
-                    habits.find(h => h.id === selectedHabitId)?.type === 'fill-in' ? 'default' : 'default'
-                    // Could optimize keyboard type based on implicit user need, but string is safest default
-                }
+                keyboardType="default"
+                placeholderTextColor={THEME.colors.textLight}
             />
-            <View style={styles.modalActions}>
-                <Button title="Cancel" onPress={() => setInputModalVisible(false)} color="#999" />
-                <Button title="Save" onPress={handleSaveInput} />
+            <View style={styles.modalBtnRow}>
+                <Button 
+                    title="Cancel" 
+                    variant="text" 
+                    onPress={() => setInputModalVisible(false)} 
+                    style={{ flex: 1, marginRight: 8 }}
+                />
+                <Button 
+                    title="Save" 
+                    onPress={handleSaveInput} 
+                    style={{ flex: 1, marginLeft: 8 }}
+                />
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -397,187 +377,165 @@ export default function HomeScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: THEME.colors.background,
   },
   listContent: {
-    paddingBottom: 80,
+    paddingBottom: 100,
+    paddingTop: THEME.spacing.md
   },
-  navHeader: {
+  calendarStrip: {
+      backgroundColor: THEME.colors.surface,
+      paddingVertical: THEME.spacing.sm,
+      borderBottomLeftRadius: THEME.borderRadius.lg,
+      borderBottomRightRadius: THEME.borderRadius.lg,
+      ...THEME.shadows.light,
+      zIndex: 1,
+      marginBottom: THEME.spacing.xs
+  },
+  calendarHeader: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
+      justifyContent: 'center',
       alignItems: 'center',
-      padding: 12,
-      backgroundColor: '#f9f9f9',
-      borderBottomWidth: 1,
-      borderBottomColor: '#eee'
+      marginBottom: THEME.spacing.sm
   },
   navButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-  },
-  navButtonDisabled: {
-      opacity: 0.5
-  },
-  navText: {
-      color: '#007AFF',
-      fontSize: 16,
-      fontWeight: '600',
-      marginHorizontal: 4
-  },
-  navTextDisabled: {
-      color: '#ccc'
+      padding: 8,
   },
   weekTitle: {
-      fontSize: 16,
-      fontWeight: 'bold',
-      color: '#333'
+      fontSize: THEME.fonts.size.subhead,
+      fontWeight: '600',
+      color: THEME.colors.text,
+      marginHorizontal: 16,
+      minWidth: 120,
+      textAlign: 'center'
   },
-  headerRow: {
+  daysRow: {
       flexDirection: 'row',
-      paddingVertical: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: '#eee',
-      backgroundColor: '#fff'
+      paddingHorizontal: THEME.spacing.md + 12, // Align roughly with cards
+      justifyContent: 'space-between'
   },
-  habitNameColumn: {
-      width: 100,
-      paddingHorizontal: 8,
-      justifyContent: 'center',
-  },
-  headerText: {
-      fontWeight: 'bold',
-      color: '#333'
-  },
-  dateCell: {
-      flex: 1,
+  dayHeaderCell: {
       alignItems: 'center',
+      width: 36,
       justifyContent: 'center',
+      borderRadius: 18,
+      height: 50
+  },
+  todayHeaderCell: {
+      backgroundColor: THEME.colors.primary,
   },
   dayName: {
       fontSize: 10,
-      color: '#666',
-      textTransform: 'uppercase'
+      color: THEME.colors.textLight,
+      marginBottom: 2,
+      fontWeight: '600'
   },
   dayNum: {
       fontSize: 14,
-      fontWeight: '600',
-      color: '#333'
-  },
-  todayText: {
-      color: '#007AFF',
-      fontWeight: 'bold'
-  },
-  row: {
-      flexDirection: 'row',
-      borderBottomWidth: 1,
-      borderBottomColor: '#f0f0f0',
-      height: 60,
-  },
-  cell: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderLeftWidth: 1,
-      borderLeftColor: '#f9f9f9'
-  },
-  todayCell: {
-      backgroundColor: '#f0f8ff'
-  },
-  habitName: {
-      fontSize: 14,
-      fontWeight: '500',
-      color: '#333'
-  },
-  habitType: {
-      fontSize: 10,
-      color: '#999',
-      marginTop: 2
-  },
-  valueText: {
-      fontSize: 12,
       fontWeight: 'bold',
-      color: '#333'
+      color: THEME.colors.text
   },
-  placeholderText: {
-      color: '#ddd',
-      fontSize: 18
+  todayHeaderText: {
+      color: '#FFF'
   },
   fab: {
     position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#007AFF',
+    bottom: 32,
+    right: 32,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: THEME.colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 6,
-    elevation: 5,
-  },
-  fabText: {
-    fontSize: 32,
-    color: '#fff',
-    marginTop: -4, 
+    ...THEME.shadows.strong,
   },
   emptyContainer: {
       alignItems: 'center',
-      marginTop: 50,
+      marginTop: 60,
+      paddingHorizontal: 40
+  },
+  emptyIconContainer: {
+      width: 120,
+      height: 120,
+      borderRadius: 60,
+      backgroundColor: THEME.colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 24,
+      ...THEME.shadows.medium
+  },
+  emptyTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: THEME.colors.text,
+      marginBottom: 8
   },
   emptyText: {
-      marginBottom: 20
+      marginBottom: 32,
+      fontSize: 16,
+      color: THEME.colors.textLight,
+      textAlign: 'center',
+      lineHeight: 24
   },
   modalOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.5)',
+      backgroundColor: THEME.colors.overlay,
       justifyContent: 'center',
-      alignItems: 'center'
+      alignItems: 'center',
+      padding: 24
   },
   modalContent: {
-      backgroundColor: '#fff',
+      backgroundColor: THEME.colors.surface,
       padding: 24,
-      borderRadius: 12,
-      width: '80%',
-      elevation: 5
+      borderRadius: THEME.borderRadius.xl,
+      width: '100%',
+      ...THEME.shadows.strong,
+      alignItems: 'center'
   },
   modalTitle: {
-      fontSize: 18,
+      fontSize: 20,
       fontWeight: 'bold',
+      color: THEME.colors.text,
       marginBottom: 4
   },
   modalSubtitle: {
       fontSize: 14,
-      color: '#666',
+      color: THEME.colors.textLight,
+      marginBottom: 24
+  },
+  modalActionRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      width: '100%',
       marginBottom: 16
+  },
+  actionBtn: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 16,
+      borderRadius: THEME.borderRadius.lg,
+      width: 100,
+      height: 100
+  },
+  actionLabel: {
+      marginTop: 8,
+      fontWeight: '600',
+      fontSize: 12
   },
   modalInput: {
       borderWidth: 1,
-      borderColor: '#ddd',
-      borderRadius: 8,
-      padding: 12,
-      fontSize: 16,
-      marginBottom: 24
+      borderColor: THEME.colors.border,
+      borderRadius: THEME.borderRadius.md,
+      padding: 16,
+      fontSize: 18,
+      width: '100%',
+      marginBottom: 24,
+      backgroundColor: THEME.colors.background,
+      color: THEME.colors.text
   },
-  actionButton: {
+  modalBtnRow: {
       flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 14,
-      borderRadius: 12,
-      marginBottom: 12,
       width: '100%'
-  },
-  actionButtonText: {
-      color: '#fff',
-      fontSize: 16,
-      fontWeight: 'bold',
-      marginLeft: 10
-  },
-  modalActions: {
-      flexDirection: 'row',
-      justifyContent: 'space-between'
   }
 });
